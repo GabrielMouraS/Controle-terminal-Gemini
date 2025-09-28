@@ -9,7 +9,7 @@ app = Flask(__name__)
 CORS(app)
 
 # Configurar a API do Gemini
-GEMINI_API_KEY = "AIzaSyDds4nRYhvNRxteJpbohx6Bf35VQdoPcZc"
+GEMINI_API_KEY = "CHAVE DE API"
 GEMINI_API_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent"
 
 class MiniLLMSystem:
