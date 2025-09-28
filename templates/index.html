@@ -1,0 +1,348 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes">
+    <meta name="description" content="Mini Sistema LLM - Assistente AI para executar tarefas simples no sistema">
+    <meta name="theme-color" content="#1a1a2e">
+    <title>Mini Sistema LLM</title>
+    <link rel="stylesheet" href="/static/styles.css">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    
+    <!-- Favicon -->
+    <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🤖</text></svg>">
+</head>
+<body>
+    <div class="chat-container" role="main">
+        <header class="chat-header">
+            <span class="icon" role="img" aria-label="Robot">🤖</span> 
+            <span>Mini Sistema LLM</span>
+        </header>
+        
+        <div class="messages" id="messages" role="log" aria-live="polite" aria-label="Conversa com o assistente">
+            <div class="message ai" role="article">
+                Olá! Sou um assistente AI que pode executar tarefas simples no sistema. Posso criar arquivos, executar comandos seguros e responder perguntas. Como posso ajudar você hoje?
+            </div>
+        </div>
+        
+        <div class="input-area" role="form">
+            <label for="user-input" class="sr-only">Digite sua mensagem</label>
+            <input 
+                type="text" 
+                id="user-input" 
+                placeholder="Digite sua mensagem aqui..." 
+                autocomplete="off"
+                autocorrect="off"
+                autocapitalize="sentences"
+                spellcheck="true"
+                maxlength="1000"
+                aria-label="Campo de mensagem"
+            >
+            <button 
+                id="send-button" 
+                type="button"
+                aria-label="Enviar mensagem"
+                disabled
+            >
+                <span class="button-text">Enviar</span>
+                <span class="loading-spinner" style="display: none;">⏳</span>
+            </button>
+        </div>
+    </div>
+
+    <!-- Classe para leitores de tela -->
+    <style>
+        .sr-only {
+            position: absolute;
+            width: 1px;
+            height: 1px;
+            padding: 0;
+            margin: -1px;
+            overflow: hidden;
+            clip: rect(0, 0, 0, 0);
+            white-space: nowrap;
+            border: 0;
+        }
+        
+        .loading-spinner {
+            animation: spin 1s linear infinite;
+        }
+        
+        @keyframes spin {
+            from { transform: rotate(0deg); }
+            to { transform: rotate(360deg); }
+        }
+    </style>
+
+    <script>
+        // Elementos DOM
+        const userInput = document.getElementById('user-input');
+        const sendButton = document.getElementById('send-button');
+        const messagesDiv = document.getElementById('messages');
+        const buttonText = sendButton.querySelector('.button-text');
+        const loadingSpinner = sendButton.querySelector('.loading-spinner');
+
+        // Estado da aplicação
+        let isLoading = false;
+
+        // Event listeners
+        sendButton.addEventListener('click', sendMessage);
+        userInput.addEventListener('keypress', handleKeyPress);
+        userInput.addEventListener('input', handleInputChange);
+
+        // Habilita o botão apenas quando há texto
+        function handleInputChange() {
+            const hasText = userInput.value.trim().length > 0;
+            sendButton.disabled = !hasText || isLoading;
+        }
+
+        // Manipula teclas pressionadas
+        function handleKeyPress(e) {
+            if (e.key === 'Enter' && !e.shiftKey) {
+                e.preventDefault();
+                if (!sendButton.disabled) {
+                    sendMessage();
+                }
+            }
+        }
+
+        // Função principal para enviar mensagem
+        async function sendMessage() {
+            const message = userInput.value.trim();
+            if (message === '' || isLoading) return;
+
+            // Atualiza UI para estado de carregamento
+            setLoadingState(true);
+            appendMessage(message, 'user');
+            userInput.value = '';
+            handleInputChange();
+
+            try {
+                const response = await fetch("/chat", {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({ message: message })
+                });
+
+                if (!response.ok) {
+                    throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+                }
+
+                const data = await response.json();
+                
+                // Processa a resposta
+                if (data.error) {
+                    appendMessage(`❌ Erro: ${data.error}`, 'ai');
+                } else if (data.response) {
+                    // Verificar se há informações de download
+                    if (data.download_info) {
+                        appendMessageWithDownload(data.response, 'ai', data.download_info);
+                    } else {
+                        appendMessage(data.response, 'ai');
+                    }
+                } else if (data.tool_output) {
+                    let output = '';
+                    if (data.tool_output.stdout) {
+                        output += `📤 Saída do comando:\n<pre>${escapeHtml(data.tool_output.stdout)}</pre>`;
+                    }
+                    if (data.tool_output.stderr) {
+                        output += `⚠️ Erros do comando:\n<pre>${escapeHtml(data.tool_output.stderr)}</pre>`;
+                    }
+                    appendMessage(output, 'ai');
+                } else {
+                    appendMessage('❓ Não foi possível processar a sua solicitação.', 'ai');
+                }
+
+            } catch (error) {
+                console.error('Erro ao comunicar com o backend:', error);
+                
+                // Mensagens de erro mais específicas
+                let errorMessage = '🔌 Erro de conexão. ';
+                if (error.message.includes('Failed to fetch')) {
+                    errorMessage += 'Verifique sua conexão com a internet.';
+                } else if (error.message.includes('HTTP 5')) {
+                    errorMessage += 'Erro interno do servidor. Tente novamente em alguns instantes.';
+                } else {
+                    errorMessage += 'Tente novamente.';
+                }
+                
+                appendMessage(errorMessage, 'ai');
+            } finally {
+                setLoadingState(false);
+                handleInputChange();
+            }
+        }
+
+        // Gerencia estado de carregamento
+        function setLoadingState(loading) {
+            isLoading = loading;
+            sendButton.disabled = loading || userInput.value.trim().length === 0;
+            
+            if (loading) {
+                buttonText.style.display = 'none';
+                loadingSpinner.style.display = 'inline';
+                sendButton.setAttribute('aria-label', 'Enviando mensagem...');
+            } else {
+                buttonText.style.display = 'inline';
+                loadingSpinner.style.display = 'none';
+                sendButton.setAttribute('aria-label', 'Enviar mensagem');
+            }
+        }
+
+        // Adiciona mensagem ao chat
+        function appendMessage(text, sender) {
+            const messageElement = document.createElement('div');
+            messageElement.classList.add('message', sender);
+            messageElement.setAttribute('role', 'article');
+            
+            // Sanitiza HTML para segurança, mas permite <pre> tags
+            if (text.includes('<pre>')) {
+                messageElement.innerHTML = text;
+            } else {
+                messageElement.textContent = text;
+            }
+            
+            messagesDiv.appendChild(messageElement);
+            
+            // Auto-scroll suave
+            setTimeout(() => {
+                messagesDiv.scrollTo({
+                    top: messagesDiv.scrollHeight,
+                    behavior: 'smooth'
+                });
+            }, 100);
+            
+            // Anuncia nova mensagem para leitores de tela
+            if (sender === 'ai') {
+                announceToScreenReader(`Nova resposta: ${text.replace(/<[^>]*>/g, '')}`);
+            }
+        }
+
+        // Adiciona mensagem com botão de download
+        function appendMessageWithDownload(text, sender, downloadInfo) {
+            const messageElement = document.createElement('div');
+            messageElement.classList.add('message', sender);
+            messageElement.setAttribute('role', 'article');
+            
+            // Criar container para texto e botão
+            const textElement = document.createElement('div');
+            textElement.textContent = text;
+            
+            const downloadButton = document.createElement('button');
+            downloadButton.textContent = `📥 Download ${downloadInfo.filename}`;
+            downloadButton.className = 'download-button';
+            downloadButton.style.cssText = `
+                margin-top: 10px;
+                padding: 8px 16px;
+                background: linear-gradient(135deg, #0f3460 0%, #1e5a8a 100%);
+                color: white;
+                border: none;
+                border-radius: 15px;
+                cursor: pointer;
+                font-size: 0.9em;
+                transition: all 0.3s ease;
+                display: block;
+            `;
+            
+            downloadButton.addEventListener('click', () => {
+                window.open(`/download/${downloadInfo.filename}`, '_blank');
+            });
+            
+            downloadButton.addEventListener('mouseenter', () => {
+                downloadButton.style.background = 'linear-gradient(135deg, #1e5a8a 0%, #2a7fb8 100%)';
+                downloadButton.style.transform = 'translateY(-1px)';
+            });
+            
+            downloadButton.addEventListener('mouseleave', () => {
+                downloadButton.style.background = 'linear-gradient(135deg, #0f3460 0%, #1e5a8a 100%)';
+                downloadButton.style.transform = 'translateY(0)';
+            });
+            
+            messageElement.appendChild(textElement);
+            messageElement.appendChild(downloadButton);
+            messagesDiv.appendChild(messageElement);
+            
+            // Auto-scroll suave
+            setTimeout(() => {
+                messagesDiv.scrollTo({
+                    top: messagesDiv.scrollHeight,
+                    behavior: 'smooth'
+                });
+            }, 100);
+            
+            // Anuncia nova mensagem para leitores de tela
+            if (sender === 'ai') {
+                announceToScreenReader(`Nova resposta: ${text} - Arquivo disponível para download`);
+            }
+        }
+
+        // Função para escapar HTML
+        function escapeHtml(text) {
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }
+
+        // Anuncia mensagens para leitores de tela
+        function announceToScreenReader(message) {
+            const announcement = document.createElement('div');
+            announcement.setAttribute('aria-live', 'assertive');
+            announcement.setAttribute('aria-atomic', 'true');
+            announcement.className = 'sr-only';
+            announcement.textContent = message;
+            
+            document.body.appendChild(announcement);
+            
+            setTimeout(() => {
+                document.body.removeChild(announcement);
+            }, 1000);
+        }
+
+        // Foco inicial no campo de entrada
+        window.addEventListener('load', () => {
+            userInput.focus();
+            handleInputChange();
+        });
+
+        // Previne zoom em iOS quando focando inputs
+        if (/iPad|iPhone|iPod/.test(navigator.userAgent)) {
+            userInput.addEventListener('focus', () => {
+                userInput.style.fontSize = '16px';
+            });
+            userInput.addEventListener('blur', () => {
+                userInput.style.fontSize = '';
+            });
+        }
+
+        // Gerencia visibilidade da página para economizar recursos
+        document.addEventListener('visibilitychange', () => {
+            if (document.hidden) {
+                // Página não está visível
+                console.log('Página oculta - pausando operações desnecessárias');
+            } else {
+                // Página está visível
+                console.log('Página visível - retomando operações');
+                userInput.focus();
+            }
+        });
+
+        // Tratamento de erros globais
+        window.addEventListener('error', (event) => {
+            console.error('Erro JavaScript:', event.error);
+            appendMessage('⚠️ Ocorreu um erro inesperado. Recarregue a página se o problema persistir.', 'ai');
+        });
+
+        // Service Worker para cache (opcional)
+        if ('serviceWorker' in navigator) {
+            window.addEventListener('load', () => {
+                // Registrar service worker aqui se necessário
+                console.log('Service Worker suportado');
+            });
+        }
+    </script>
+</body>
+</html>
+
